@@ -1,0 +1,145 @@
+name: ecs-promote
+
+# Reusable. Promote a tested QA beta image to PROD without rebuilding: copy the exact image bytes
+# into the PROD ECR repo as the clean vX.Y.Z tag, deploy it, then cut the release tag on the beta's commit.
+# The job runs in the `production` Environment, so required reviewers gate it and the PROD OIDC role
+# (trusted only for environment:production) is only assumable after approval.
+on:
+  workflow_call:
+    inputs:
+      aws-region:
+        type: string
+        required: true
+      role-arn:
+        description: PROD deploy role (Terraform output deploy_role_arn in the prod environment).
+        type: string
+        required: true
+      qa-ecr-repository:
+        type: string
+        required: true
+      prod-ecr-repository:
+        type: string
+        required: true
+      cluster:
+        type: string
+        required: true
+      service:
+        type: string
+        required: true
+      container-name:
+        type: string
+        default: app
+      beta-tag:
+        description: Beta to promote (vX.Y.Z-beta.N). Empty means the latest beta git tag.
+        type: string
+        default: ""
+    outputs:
+      release-tag:
+        description: The clean vX.Y.Z release that was deployed.
+        value: ${{ jobs.promote.outputs.release-tag }}
+
+permissions:
+  id-token: write # OIDC to AWS
+  contents: write # push the release git tag
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: deploy-prod-${{ inputs.service }}
+      cancel-in-progress: false # never cancel an in-flight deploy
+    outputs:
+      release-tag: ${{ steps.resolve.outputs.release }}
+    env:
+      AWS_REGION: ${{ inputs.aws-region }}
+      QA_REPOSITORY: ${{ inputs.qa-ecr-repository }}
+      PROD_REPOSITORY: ${{ inputs.prod-ecr-repository }}
+      CLUSTER: ${{ inputs.cluster }}
+      SERVICE: ${{ inputs.service }}
+      CONTAINER: ${{ inputs.container-name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # need every tag to find the latest beta
+
+      - name: Resolve beta and release tags
+        id: resolve
+        env:
+          BETA_INPUT: ${{ inputs.beta-tag }}
+        run: |
+          beta="$BETA_INPUT"
+          if [ -z "$beta" ]; then
+            beta=$(git tag -l | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$' | sort -V | tail -1 || true)
+          fi
+          [[ "$beta" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+)-beta\.[0-9]+$ ]] || { echo "::error::'${beta}' is not a vX.Y.Z-beta.N tag"; exit 1; }
+          release="${BASH_REMATCH[1]}"
+          git rev-parse -q --verify "refs/tags/${beta}" > /dev/null || { echo "::error::git tag ${beta} not found"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/${release}" > /dev/null; then
+            echo "::error::${release} is already released"; exit 1
+          fi
+          echo "beta=${beta}" >> "$GITHUB_OUTPUT"
+          echo "release=${release}" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@45666896f5d8e0f10ae255413f3a4cdd03bdc8f5 # v6.3.1
+        with:
+          role-to-assume: ${{ inputs.role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Copy the QA image to PROD
+        id: image
+        env:
+          BETA: ${{ steps.resolve.outputs.beta }}
+          RELEASE: ${{ steps.resolve.outputs.release }}
+        run: |
+          registry=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${AWS_REGION}.amazonaws.com
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+
+          digest() { aws ecr describe-images --repository-name "$1" --image-ids "imageTag=$2" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true; }
+          qa_digest=$(digest "$QA_REPOSITORY" "$BETA")
+          [ -n "$qa_digest" ] || { echo "::error::no ${BETA} image in ${QA_REPOSITORY}"; exit 1; }
+
+          existing=$(digest "$PROD_REPOSITORY" "$RELEASE")
+          if [ -z "$existing" ]; then
+            docker pull "${registry}/${QA_REPOSITORY}:${BETA}"
+            docker tag "${registry}/${QA_REPOSITORY}:${BETA}" "${registry}/${PROD_REPOSITORY}:${RELEASE}"
+            docker push "${registry}/${PROD_REPOSITORY}:${RELEASE}"
+          elif [ "$existing" != "$qa_digest" ]; then
+            echo "::error::${RELEASE} already exists in ${PROD_REPOSITORY} with a different digest"; exit 1
+          fi
+
+          [ "$(digest "$PROD_REPOSITORY" "$RELEASE")" = "$qa_digest" ] || { echo "::error::PROD digest differs from QA"; exit 1; }
+          echo "uri=${registry}/${PROD_REPOSITORY}:${RELEASE}" >> "$GITHUB_OUTPUT"
+
+      - name: Register task definition
+        id: taskdef
+        env:
+          IMAGE: ${{ steps.image.outputs.uri }}
+        run: |
+          aws ecs describe-task-definition --task-definition "$SERVICE" --query taskDefinition > current.json
+          jq --arg c "$CONTAINER" --arg i "$IMAGE" '
+            .containerDefinitions |= map(if .name == $c then .image = $i else . end)
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+          ' current.json > next.json
+          arn=$(aws ecs register-task-definition --cli-input-json file://next.json --query taskDefinition.taskDefinitionArn --output text)
+          echo "arn=${arn}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy and wait for stability
+        env:
+          TASK_DEFINITION_ARN: ${{ steps.taskdef.outputs.arn }}
+        run: |
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --task-definition "$TASK_DEFINITION_ARN" > /dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+          # services-stable also passes when the circuit breaker rolled back to the old task set.
+          state=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query "services[0].deployments[?status=='PRIMARY'].rolloutState | [0]" --output text)
+          [ "$state" = COMPLETED ] || { echo "::error::rollout state is ${state}"; exit 1; }
+
+      - name: Cut the release tag on the beta commit
+        env:
+          BETA: ${{ steps.resolve.outputs.beta }}
+          RELEASE: ${{ steps.resolve.outputs.release }}
+        run: |
+          git tag "$RELEASE" "$(git rev-list -n 1 "$BETA")"
+          git push origin "refs/tags/$RELEASE"
