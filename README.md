@@ -28,6 +28,17 @@ No static AWS keys. Each environment has a `<app>-<stage>-deploy` role that GitH
 
 Apply `dev` first: it creates the OIDC provider, which is one per AWS account.
 
+## Deploying to QA
+
+`.github/workflows/ecs-deploy.yml` is a reusable workflow (`workflow_call`). The application repo calls it on every push to `main` using `examples/deploy-qa.yml`. It:
+
+1. computes the next `vX.Y.Z-beta.N` from git tags (next patch after the latest release),
+2. builds the image once (`--provenance=false`, 3 attempts) and pushes that immutable tag to the QA ECR repo,
+3. pushes the git tag on that commit,
+4. registers a task definition with the new image, updates the ECS service and waits for it to be stable; it fails if the circuit breaker rolled the deploy back.
+
+Deploys for one service queue and are never cancelled. Set repository variables `AWS_REGION` and `QA_DEPLOY_ROLE_ARN` (the `deploy_role_arn` Terraform output) in the app repo.
+
 ## Checks
 
 `ci.yml` runs on every PR with no AWS account: `terraform fmt -check`, `validate`, `tflint`, `trivy config`, `actionlint`.
