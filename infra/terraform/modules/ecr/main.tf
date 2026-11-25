@@ -1,12 +1,6 @@
-locals {
-  stages = toset(["qa", "prod"])
-}
-
 # Every tag is immutable (vX.Y.Z-beta.N in QA, plus vX.Y.Z in PROD); there is no moving pointer tag.
 resource "aws_ecr_repository" "this" {
-  for_each = local.stages
-
-  name                 = "${var.app_name}-${each.key}"
+  name                 = var.name
   image_tag_mutability = "IMMUTABLE"
 
   image_scanning_configuration {
@@ -19,8 +13,7 @@ resource "aws_ecr_repository" "this" {
 }
 
 resource "aws_ecr_lifecycle_policy" "this" {
-  for_each   = aws_ecr_repository.this
-  repository = each.value.name
+  repository = aws_ecr_repository.this.name
 
   policy = jsonencode({
     rules = [

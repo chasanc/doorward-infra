@@ -13,5 +13,5 @@ validate:
 
 # Needs real AWS credentials and the state bucket: make plan ENV=dev BUCKET=<state-bucket>
 plan:
-	$(TF) init -input=false -reconfigure -backend-config="bucket=$(BUCKET)" -backend-config="region=us-east-1"
+	$(TF) init -input=false -reconfigure -backend-config="bucket=$(BUCKET)" -backend-config="region=us-east-1" -backend-config="key=doorward-infra/$(ENV).tfstate"
 	$(TF) plan -var-file=envs/$(ENV).tfvars
