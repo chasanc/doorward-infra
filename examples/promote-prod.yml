@@ -1,0 +1,29 @@
+# Copy to .github/workflows/promote-prod.yml in the application repo (chasanc/doorward).
+# Run it from the Actions tab. Leave beta-tag empty to promote the latest beta.
+# Needs a GitHub Environment named `production` with required reviewers, and repository variables
+# AWS_REGION and PROD_DEPLOY_ROLE_ARN (the deploy_role_arn output of the prod Terraform environment).
+name: promote-prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta-tag:
+        description: "Beta to promote, e.g. v0.1.0-beta.3 (empty = latest beta)"
+        required: false
+        default: ""
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  promote:
+    uses: chasanc/doorward-infra/.github/workflows/ecs-promote.yml@main
+    with:
+      aws-region: ${{ vars.AWS_REGION }}
+      role-arn: ${{ vars.PROD_DEPLOY_ROLE_ARN }}
+      qa-ecr-repository: doorward-qa
+      prod-ecr-repository: doorward-prod
+      cluster: doorward-prod
+      service: doorward-prod
+      beta-tag: ${{ inputs.beta-tag }}

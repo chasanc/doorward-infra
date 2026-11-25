@@ -129,6 +129,7 @@ data "aws_iam_policy_document" "deploy" {
     actions = [
       "ecr:BatchCheckLayerAvailability",
       "ecr:BatchGetImage",
+      "ecr:DescribeImages",
       "ecr:GetDownloadUrlForLayer",
       "ecr:InitiateLayerUpload",
       "ecr:UploadLayerPart",
@@ -144,7 +145,7 @@ data "aws_iam_policy_document" "deploy" {
 
     content {
       sid       = "EcrPullSource"
-      actions   = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"]
+      actions   = ["ecr:BatchGetImage", "ecr:DescribeImages", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"]
       resources = var.ecr_pull_repository_arns
     }
   }

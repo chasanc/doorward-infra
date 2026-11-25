@@ -39,6 +39,17 @@ Apply `dev` first: it creates the OIDC provider, which is one per AWS account.
 
 Deploys for one service queue and are never cancelled. Set repository variables `AWS_REGION` and `QA_DEPLOY_ROLE_ARN` (the `deploy_role_arn` Terraform output) in the app repo.
 
+## Promoting to PROD
+
+`.github/workflows/ecs-promote.yml` is a reusable workflow; the app repo triggers it by hand with `examples/promote-prod.yml` (`workflow_dispatch`, optional `beta-tag`). It runs in the `production` GitHub Environment, so required reviewers must approve before the PROD role can be assumed. It:
+
+1. resolves the beta (the input, or the latest `vX.Y.Z-beta.N` git tag) and refuses if `vX.Y.Z` is already released,
+2. copies that exact QA image into the PROD ECR repo as `vX.Y.Z` (pull, re-tag, push, no rebuild) and checks the PROD digest equals the QA digest; a re-run after a failed deploy reuses the image if the digest matches,
+3. registers a task definition, updates the PROD service and fails unless the rollout is `COMPLETED`,
+4. pushes the `vX.Y.Z` git tag on the beta's commit.
+
+Create the `production` Environment with required reviewers in the app repo, and set `PROD_DEPLOY_ROLE_ARN`.
+
 ## Checks
 
 `ci.yml` runs on every PR with no AWS account: `terraform fmt -check`, `validate`, `tflint`, `trivy config`, `actionlint`.
