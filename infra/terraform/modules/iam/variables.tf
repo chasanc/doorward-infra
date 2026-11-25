@@ -33,6 +33,21 @@ variable "ecr_repository_arn" {
   type        = string
 }
 
+variable "task_s3_bucket_arn" {
+  description = "Data bucket the task may read and write."
+  type        = string
+}
+
+variable "task_secret_arns" {
+  description = "Secrets the task may read (application secret, database master secret)."
+  type        = list(string)
+}
+
+variable "task_kms_key_arns" {
+  description = "Customer-managed keys protecting the bucket and the secrets."
+  type        = list(string)
+}
+
 variable "ecr_pull_repository_arns" {
   description = "Extra ECR repositories the deploy role may read (PROD reads the QA repository)."
   type        = list(string)

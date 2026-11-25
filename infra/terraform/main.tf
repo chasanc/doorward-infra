@@ -23,8 +23,47 @@ module "ecr" {
   image_retention_count = var.image_retention_count
 }
 
+module "s3" {
+  source = "./modules/s3"
+
+  name          = local.name
+  force_destroy = var.environment == "dev"
+}
+
+module "secrets" {
+  source = "./modules/secrets"
+
+  name = local.name
+}
+
+module "rds" {
+  source = "./modules/rds"
+
+  name                    = local.name
+  vpc_id                  = module.network.vpc_id
+  subnet_ids              = module.network.private_subnet_ids
+  tasks_security_group_id = module.network.tasks_security_group_id
+  log_retention_days      = var.log_retention_days
+  deletion_protection     = var.environment == "prod"
+  multi_az                = var.db_multi_az
+}
+
+# The budget is account-wide, so one environment owns it (like the OIDC provider).
+module "budget" {
+  count  = var.create_budget ? 1 : 0
+  source = "./modules/budget"
+
+  name      = var.app_name
+  limit_usd = var.budget_limit_usd
+  email     = var.budget_email
+}
+
 module "iam" {
   source = "./modules/iam"
+
+  task_s3_bucket_arn = module.s3.bucket_arn
+  task_secret_arns   = [module.secrets.secret_arn, module.rds.master_secret_arn]
+  task_kms_key_arns  = [module.s3.kms_key_arn, module.secrets.kms_key_arn]
 
   name                     = local.name
   region                   = var.region

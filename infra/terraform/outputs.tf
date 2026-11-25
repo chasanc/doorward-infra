@@ -8,6 +8,21 @@ output "deploy_role_arn" {
   value       = module.iam.deploy_role_arn
 }
 
+output "db_endpoint" {
+  description = "PostgreSQL host:port."
+  value       = module.rds.endpoint
+}
+
+output "data_bucket_name" {
+  description = "S3 data bucket."
+  value       = module.s3.bucket_name
+}
+
+output "app_secret_arn" {
+  description = "Secrets Manager secret to fill with put-secret-value."
+  value       = module.secrets.secret_arn
+}
+
 output "cluster_name" {
   description = "ECS cluster name."
   value       = module.ecs_service.cluster_name

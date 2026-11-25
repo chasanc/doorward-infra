@@ -70,10 +70,42 @@ resource "aws_iam_role_policy" "execution_ecr_auth" {
   policy = data.aws_iam_policy_document.execution_ecr_auth.json
 }
 
-# Task role: the app's own identity. Empty on purpose; later milestones attach S3/secrets access.
+# Task role: the app's own identity. Only its data bucket, its secrets and the keys that protect them.
 resource "aws_iam_role" "task" {
   name               = "${var.name}-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_trust.json
+}
+
+data "aws_iam_policy_document" "task" {
+  statement {
+    sid       = "DataBucketObjects"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["${var.task_s3_bucket_arn}/*"]
+  }
+
+  statement {
+    sid       = "DataBucketList"
+    actions   = ["s3:ListBucket"]
+    resources = [var.task_s3_bucket_arn]
+  }
+
+  statement {
+    sid       = "ReadSecrets"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = var.task_secret_arns
+  }
+
+  statement {
+    sid       = "UseDataKeys"
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
+    resources = var.task_kms_key_arns
+  }
+}
+
+resource "aws_iam_role_policy" "task" {
+  name   = "data-access"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.task.json
 }
 
 # ---------------------------------------------------------------- GitHub OIDC
