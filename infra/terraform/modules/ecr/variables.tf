@@ -1,9 +1,9 @@
-variable "app_name" {
-  description = "Application name; repositories are named <app_name>-qa and <app_name>-prod."
+variable "name" {
+  description = "Repository name, e.g. doorward-qa."
   type        = string
 }
 
 variable "image_retention_count" {
-  description = "Tagged images kept per repository."
+  description = "Tagged images kept in the repository."
   type        = number
 }

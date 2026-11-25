@@ -1,4 +1,9 @@
-output "repository_urls" {
-  description = "Repository URLs keyed by stage (qa, prod)."
-  value       = { for stage, repo in aws_ecr_repository.this : stage => repo.repository_url }
+output "repository_url" {
+  description = "Repository URL."
+  value       = aws_ecr_repository.this.repository_url
+}
+
+output "repository_arn" {
+  description = "Repository ARN."
+  value       = aws_ecr_repository.this.arn
 }
