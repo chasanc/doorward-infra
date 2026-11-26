@@ -1,0 +1,22 @@
+# Copy to .github/workflows/deploy-qa.yml in the application repo (chasanc/doorward).
+# Every push to main builds one image and deploys it to QA. Values come from repository variables
+# (Settings > Secrets and variables > Actions > Variables); the Terraform outputs give you each one.
+name: deploy-qa
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  deploy:
+    uses: chasanc/doorward-infra/.github/workflows/ecs-deploy.yml@main
+    with:
+      aws-region: ${{ vars.AWS_REGION }}
+      role-arn: ${{ vars.QA_DEPLOY_ROLE_ARN }}
+      ecr-repository: doorward-qa
+      cluster: doorward-qa
+      service: doorward-qa

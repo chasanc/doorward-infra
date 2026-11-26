@@ -1,0 +1,10 @@
+PLAN.md
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfplan
+# envs/*.tfvars hold non-secret config and are committed; any other tfvars may hold secrets
+*.tfvars
+!**/envs/*.tfvars
+.claude/Dev10x

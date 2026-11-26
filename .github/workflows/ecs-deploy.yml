@@ -1,0 +1,126 @@
+name: ecs-deploy
+
+# Reusable. Build once from the caller's checkout, push an immutable vX.Y.Z-beta.N image to QA ECR,
+# tag the commit, and roll it out to the QA ECS service. No mutable pointer tags anywhere.
+on:
+  workflow_call:
+    inputs:
+      aws-region:
+        type: string
+        required: true
+      role-arn:
+        description: QA deploy role (Terraform output deploy_role_arn); assumed through GitHub OIDC.
+        type: string
+        required: true
+      ecr-repository:
+        description: QA ECR repository name, e.g. doorward-qa.
+        type: string
+        required: true
+      cluster:
+        type: string
+        required: true
+      service:
+        type: string
+        required: true
+      container-name:
+        type: string
+        default: app
+      context:
+        type: string
+        default: .
+    outputs:
+      image-tag:
+        description: The vX.Y.Z-beta.N tag that was built and deployed.
+        value: ${{ jobs.deploy.outputs.image-tag }}
+
+permissions:
+  id-token: write # OIDC to AWS
+  contents: write # push the beta git tag
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: deploy-qa-${{ inputs.service }}
+      cancel-in-progress: false # never cancel an in-flight deploy
+    outputs:
+      image-tag: ${{ steps.version.outputs.tag }}
+    env:
+      AWS_REGION: ${{ inputs.aws-region }}
+      REPOSITORY: ${{ inputs.ecr-repository }}
+      CLUSTER: ${{ inputs.cluster }}
+      SERVICE: ${{ inputs.service }}
+      CONTAINER: ${{ inputs.container-name }}
+      CONTEXT: ${{ inputs.context }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # need every tag to compute the next beta
+
+      - uses: aws-actions/configure-aws-credentials@45666896f5d8e0f10ae255413f3a4cdd03bdc8f5 # v6.3.1
+        with:
+          role-to-assume: ${{ inputs.role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Next beta version
+        id: version
+        run: |
+          last=$(git tag -l | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+          IFS=. read -r major minor patch <<< "${last:-v0.0.0}"
+          base="${major}.${minor}.$((patch + 1))"
+          n=$(git tag -l "${base}-beta.*" | sed 's/.*-beta\.//' | sort -n | tail -1)
+          echo "tag=${base}-beta.$(( ${n:-0} + 1 ))" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        id: image
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          registry=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${AWS_REGION}.amazonaws.com
+          uri="${registry}/${REPOSITORY}:${TAG}"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+          # --provenance=false keeps a plain single-manifest image, so the PROD re-tag copies identical bytes.
+          for attempt in 1 2 3; do
+            docker build --provenance=false -t "$uri" "$CONTEXT" && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
+          for attempt in 1 2 3; do
+            docker push "$uri" && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
+          echo "uri=${uri}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag the commit
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git tag "$TAG"
+          git push origin "refs/tags/$TAG"
+
+      - name: Register task definition
+        id: taskdef
+        env:
+          IMAGE: ${{ steps.image.outputs.uri }}
+        run: |
+          aws ecs describe-task-definition --task-definition "$SERVICE" --query taskDefinition > current.json
+          # Swap the image, drop the fields register-task-definition rejects.
+          jq --arg c "$CONTAINER" --arg i "$IMAGE" '
+            .containerDefinitions |= map(if .name == $c then .image = $i else . end)
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+          ' current.json > next.json
+          arn=$(aws ecs register-task-definition --cli-input-json file://next.json --query taskDefinition.taskDefinitionArn --output text)
+          echo "arn=${arn}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy and wait for stability
+        env:
+          TASK_DEFINITION_ARN: ${{ steps.taskdef.outputs.arn }}
+        run: |
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --task-definition "$TASK_DEFINITION_ARN" > /dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+          # services-stable also passes when the circuit breaker rolled back to the old task set.
+          state=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query "services[0].deployments[?status=='PRIMARY'].rolloutState | [0]" --output text)
+          [ "$state" = COMPLETED ] || { echo "::error::rollout state is ${state}"; exit 1; }
