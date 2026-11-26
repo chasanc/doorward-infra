@@ -45,10 +45,10 @@ variable "budget_limit_usd" {
 variable "budget_email" {
   description = "Alert recipient. Not committed: set TF_VAR_budget_email when create_budget is true."
   type        = string
-  default     = "unset@example.invalid"
+  default     = null
 
   validation {
-    condition     = !var.create_budget || !endswith(var.budget_email, ".invalid")
+    condition     = !var.create_budget || var.budget_email != null
     error_message = "Set budget_email (TF_VAR_budget_email) when create_budget is true."
   }
 }

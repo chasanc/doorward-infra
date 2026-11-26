@@ -2,7 +2,7 @@
 
 Trunk-based ECS/ECR CI/CD and AWS Terraform for `chasanc/doorward`.
 
-Status: milestone 2 (network, ECS Fargate service, IAM with GitHub OIDC). The deploy and promote workflows, architecture diagram and cost table land in later milestones.
+Status: milestone 5 (infrastructure modules and the QA deploy and PROD promote workflows). The architecture diagram, cost table and release docs land in milestone 6.
 
 ## Layout
 
@@ -10,8 +10,8 @@ One Terraform root (`infra/terraform`) per environment, selected by tfvars and a
 
 | Environment | Stage | Creates |
 |---|---|---|
-| `dev` | QA | VPC, `doorward-qa` ECR repo, ECS cluster and service, IAM roles, GitHub OIDC provider |
-| `prod` | PROD | VPC, `doorward-prod` ECR repo, ECS cluster and service, IAM roles |
+| `dev` | QA | VPC, `doorward-qa` ECR repo, ECS cluster and service, IAM roles, RDS, S3 bucket, secret, GitHub OIDC provider, account budget |
+| `prod` | PROD | VPC, `doorward-prod` ECR repo, ECS cluster and service, IAM roles, RDS, S3 bucket, secret |
 
 Modules: `network`, `ecr`, `ecs-service`, `iam`, `rds`, `s3`, `secrets`, `budget`.
 

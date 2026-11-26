@@ -106,19 +106,20 @@ resource "aws_db_instance" "this" {
   publicly_accessible    = false
   multi_az               = var.multi_az
 
-  iam_database_authentication_enabled = true
-  auto_minor_version_upgrade          = true
-  backup_retention_period             = var.backup_retention_days
-  copy_tags_to_snapshot               = true
-  enabled_cloudwatch_logs_exports     = ["postgresql", "upgrade"] # keep in step with local.log_exports
+  auto_minor_version_upgrade      = true
+  backup_retention_period         = var.backup_retention_days
+  copy_tags_to_snapshot           = true
+  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"] # keep in step with local.log_exports
 
-  deletion_protection       = var.deletion_protection
-  skip_final_snapshot       = !var.deletion_protection
-  final_snapshot_identifier = var.deletion_protection ? "${var.name}-final" : null
+  deletion_protection = var.deletion_protection
+  skip_final_snapshot = !var.deletion_protection
+  # Timestamped so destroying a recreated instance never collides with an older final snapshot.
+  final_snapshot_identifier = var.deletion_protection ? "${var.name}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}" : null
 
   depends_on = [aws_cloudwatch_log_group.db]
 
   lifecycle {
-    ignore_changes = [engine_version] # minor versions upgrade themselves
+    # Minor versions upgrade themselves; the snapshot name is fixed at creation instead of changing every plan.
+    ignore_changes = [engine_version, final_snapshot_identifier]
   }
 }

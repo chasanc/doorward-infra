@@ -34,6 +34,8 @@ module "secrets" {
   source = "./modules/secrets"
 
   name = local.name
+  # A deleted secret keeps its name reserved for the window, which blocks a dev teardown and rebuild.
+  recovery_window_days = var.environment == "dev" ? 0 : 7
 }
 
 module "rds" {
